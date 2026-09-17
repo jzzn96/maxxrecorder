@@ -306,6 +306,35 @@
     transform: none;
   }
 
+  .filename-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .filename-label {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    flex: none;
+    white-space: nowrap;
+  }
+
+  .filename-row input {
+    flex: 1;
+    min-width: 0;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 10px;
+    color: var(--text);
+    font-size: 0.85rem;
+  }
+
+  .filename-row input:disabled {
+    opacity: 0.5;
+  }
+
   .link-area {
     margin-top: 4px;
     display: flex;
@@ -392,6 +421,11 @@
         Central de Controle → "Gravação de Tela"; no Android, atalhos rápidos → "Gravar tela" —
         e envie o arquivo pelo botão acima.
       </p>
+
+      <div class="filename-row">
+        <label for="fileNameInput" class="filename-label">Nome do arquivo</label>
+        <input type="text" id="fileNameInput" placeholder="gravacao" disabled>
+      </div>
 
       <div class="buttons">
         <button id="btnDownload" disabled>⭳ Baixar Localmente</button>
@@ -558,6 +592,7 @@
   const btnStart = /** @type {HTMLButtonElement} */ (document.getElementById('btnStart'));
   const btnPause = /** @type {HTMLButtonElement} */ (document.getElementById('btnPause'));
   const btnStop = /** @type {HTMLButtonElement} */ (document.getElementById('btnStop'));
+  const fileNameInput = /** @type {HTMLInputElement} */ (document.getElementById('fileNameInput'));
   const btnDownload = /** @type {HTMLButtonElement} */ (document.getElementById('btnDownload'));
   const btnShare = /** @type {HTMLButtonElement} */ (document.getElementById('btnShare'));
   const btnCopy = /** @type {HTMLButtonElement} */ (document.getElementById('btnCopy'));
@@ -611,6 +646,42 @@
     const m = String(Math.floor(totalSec / 60)).padStart(2, '0');
     const s = String(totalSec % 60).padStart(2, '0');
     return `${m}:${s}`;
+  }
+
+  // --- Nome do arquivo (editável antes de baixar/enviar) ---
+  function defaultFileNameBase() {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `gravacao-${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+  }
+
+  function baseNameFromFile(name) {
+    const idx = name.lastIndexOf('.');
+    return idx > 0 ? name.slice(0, idx) : name;
+  }
+
+  /** @param {Blob} blob */
+  function getFileExtension(blob) {
+    // Veio do seletor de arquivo (ex.: gravação nativa do celular) — preserva a
+    // extensão original (.mp4, .mov etc.), em vez de assumir .webm.
+    if (blob instanceof File && blob.name && blob.name.includes('.')) {
+      return blob.name.slice(blob.name.lastIndexOf('.'));
+    }
+    return (blob.type || '').includes('mp4') ? '.mp4' : '.webm';
+  }
+
+  function sanitizeBaseName(value) {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const withoutExt = trimmed.replace(/\.[a-z0-9]{2,4}$/i, ''); // caso a pessoa digite a extensão junto
+    const cleaned = withoutExt.replace(/[\\/:*?"<>|]+/g, '-').trim();
+    return cleaned || null;
+  }
+
+  /** @param {Blob} blob */
+  function buildFileName(blob) {
+    const base = sanitizeBaseName(fileNameInput.value) || defaultFileNameBase();
+    return base + getFileExtension(blob);
   }
 
   // O navegador só grava nos formatos que ele mesmo sabe decodificar depois.
@@ -769,6 +840,8 @@
     linkOutput.value = '';
     btnShare.disabled = true;
     btnDownload.disabled = true;
+    fileNameInput.value = '';
+    fileNameInput.disabled = true;
   }
 
   function resetControlsAfterSession() {
@@ -934,6 +1007,8 @@
     setStatus(`Gravação finalizada (${duration}, ${sizeMb}). Revise e gere o link quando quiser.`, 'ready');
     btnShare.disabled = false;
     btnDownload.disabled = false;
+    fileNameInput.disabled = false;
+    fileNameInput.value = defaultFileNameBase();
   }
 
   // --- Baixar Localmente ---
@@ -941,7 +1016,7 @@
     if (!recordedBlob || !previewObjectUrl) return;
     const a = document.createElement('a');
     a.href = previewObjectUrl;
-    a.download = `gravacao-${Date.now()}.webm`;
+    a.download = buildFileName(recordedBlob);
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -970,6 +1045,8 @@
 
     setStatus(`Vídeo carregado (${formatMb(file.size)}). Envie para o Drive quando quiser.`, 'ready');
     btnShare.disabled = false;
+    fileNameInput.disabled = false;
+    fileNameInput.value = baseNameFromFile(file.name);
   });
 
   // --- 4. Gerar Link de Compartilhamento ---
@@ -1077,7 +1154,7 @@
     }
 
     progressWrap.hidden = false;
-    const fileName = `gravacao-${Date.now()}.webm`;
+    const fileName = buildFileName(blob);
     const maxAttempts = 3;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
