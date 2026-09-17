@@ -468,7 +468,13 @@
   // ser "não sensível" não passa pela revisão/verificação de app do Google).
   // O escopo do YouTube (`youtube.upload`) já é "sensível", então o Google
   // mostra o aviso de "app não verificado" no login — normal em fase de teste.
-  const GOOGLE_CLIENT_ID = '1008553137920-2tt36vcp0bp83g5l5r3r0oh0gdsgscuo.apps.googleusercontent.com';
+  // Client IDs separados para Drive e YouTube: usar o mesmo Client ID pros dois
+  // faz a Google tentar unificar o consentimento (autorização incremental) num
+  // pedido só, e ela recusa essa combinação especificamente ("scopes that
+  // cannot be requested together") — com Client IDs distintos cada um pede seu
+  // próprio consentimento, isolado do outro.
+  const DRIVE_CLIENT_ID = '1008553137920-2tt36vcp0bp83g5l5r3r0oh0gdsgscuo.apps.googleusercontent.com';
+  const YOUTUBE_CLIENT_ID = '1008553137920-l30r6nu7s76co58c6dfnh9vl411ni7qe.apps.googleusercontent.com';
   const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
   const DRIVE_UPLOAD_ENDPOINT = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id';
   const YOUTUBE_SCOPE = 'https://www.googleapis.com/auth/youtube.upload';
@@ -492,7 +498,7 @@
   // separadamente, cada um só com o acesso mínimo que de fato usa, em vez de
   // um único pedido genérico com os dois escopos somados.
   /** @param {string} scope */
-  function createTokenManager(scope) {
+  function createTokenManager(clientId, scope) {
     /** @type {any} */
     let client = null;
     /** @type {string | null} */
@@ -519,7 +525,7 @@
         throw new Error('Google Identity Services não carregou (verifique sua conexão ou bloqueador de anúncios)');
       }
       client = g.accounts.oauth2.initTokenClient({
-        client_id: GOOGLE_CLIENT_ID,
+        client_id: clientId,
         scope,
         callback: (response) => {
           if (response && response.error) {
@@ -563,8 +569,8 @@
     return { getToken };
   }
 
-  const driveAuth = createTokenManager(DRIVE_SCOPE);
-  const youtubeAuth = createTokenManager(YOUTUBE_SCOPE);
+  const driveAuth = createTokenManager(DRIVE_CLIENT_ID, DRIVE_SCOPE);
+  const youtubeAuth = createTokenManager(YOUTUBE_CLIENT_ID, YOUTUBE_SCOPE);
 
   /** @type {MediaStream | null} */
   let screenStream = null;
