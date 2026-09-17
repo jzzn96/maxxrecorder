@@ -430,6 +430,7 @@
       <div class="buttons">
         <button id="btnDownload" disabled>⭳ Baixar Localmente</button>
         <button id="btnShare" disabled>4. Enviar para o Google Drive</button>
+        <button id="btnShareYoutube" disabled>5. Enviar para o YouTube</button>
       </div>
 
       <div class="link-area" id="linkArea" hidden>
@@ -443,9 +444,10 @@
       </p>
 
       <p class="hint">
-        O upload usa a cota gratuita da sua conta Google (15 GB). A gravação para
+        Drive usa a cota gratuita da sua conta Google (15 GB); YouTube aceita até 100 envios por
+        dia (mais que suficiente pro uso normal) e sobe sempre como "Privado". A gravação para
         automaticamente perto de 2 GB, só como proteção contra esquecer a gravação rodando por
-        muito tempo — não é um limite do Drive.
+        muito tempo — não é um limite do Drive nem do YouTube.
       </p>
     </div>
   </div>
@@ -459,15 +461,19 @@
    * @typedef {{ videoBitsPerSecond: number, audioBitsPerSecond: number }} QualityPreset
    */
 
-  // Envio direto para o Google Drive do próprio usuário via OAuth (Google Identity
-  // Services, carregado no <head>) + Drive API v3, chamadas diretamente do
-  // navegador (sem servidor próprio). Escopo `drive.file`: o app só acessa os
-  // arquivos que ele mesmo cria, nunca o resto do Drive da pessoa — e por ser um
-  // escopo "não sensível", não passa pela revisão/verificação de app do Google.
+  // Envio direto pro Google Drive e/ou YouTube da própria conta do usuário via
+  // OAuth (Google Identity Services, carregado no <head>), chamadas direto do
+  // navegador (sem servidor próprio). Escopo do Drive é `drive.file` (só os
+  // arquivos que o próprio app cria, nunca o resto do Drive da pessoa — e por
+  // ser "não sensível" não passa pela revisão/verificação de app do Google).
+  // O escopo do YouTube (`youtube.upload`) já é "sensível", então o Google
+  // mostra o aviso de "app não verificado" no login — normal em fase de teste.
   const GOOGLE_CLIENT_ID = '1008553137920-2tt36vcp0bp83g5l5r3r0oh0gdsgscuo.apps.googleusercontent.com';
   const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
   const DRIVE_UPLOAD_ENDPOINT = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id';
-  const MAX_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024; // corte de sanidade, não é um limite real do Drive
+  const YOUTUBE_SCOPE = 'https://www.googleapis.com/auth/youtube.upload';
+  const YOUTUBE_UPLOAD_ENDPOINT = 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=multipart&part=snippet,status';
+  const MAX_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024; // corte de sanidade, não é um limite real do Drive/YouTube
   const SAFE_STOP_BYTES = 2 * 1024 * 1024 * 1024; // proteção contra esquecer a gravação rodando, não é limite do Drive
   const RECORDER_TIMESLICE_MS = 1000; // fatia a gravação em pedaços de 1s (permite tamanho "ao vivo")
 
@@ -482,72 +488,83 @@
   class UploadServerError extends Error {}
 
   // --- Autenticação com o Google (Identity Services) ---
-  /** @type {any} */
-  let tokenClient = null;
-  /** @type {string | null} */
-  let accessToken = null;
-  let accessTokenExpiresAt = 0;
-  /** @type {((token: string) => void) | null} */
-  let pendingTokenResolve = null;
-  /** @type {((err: Error) => void) | null} */
-  let pendingTokenReject = null;
+  // Um "gerenciador de token" por escopo — Drive e YouTube pedem consentimento
+  // separadamente, cada um só com o acesso mínimo que de fato usa, em vez de
+  // um único pedido genérico com os dois escopos somados.
+  /** @param {string} scope */
+  function createTokenManager(scope) {
+    /** @type {any} */
+    let client = null;
+    /** @type {string | null} */
+    let token = null;
+    let expiresAt = 0;
+    /** @type {((token: string) => void) | null} */
+    let pendingResolve = null;
+    /** @type {((err: Error) => void) | null} */
+    let pendingReject = null;
 
-  function settlePendingToken(token, err) {
-    const resolve = pendingTokenResolve;
-    const reject = pendingTokenReject;
-    pendingTokenResolve = null;
-    pendingTokenReject = null;
-    if (err) { if (reject) reject(err); return; }
-    if (resolve) resolve(/** @type {string} */ (token));
-  }
-
-  function ensureTokenClient() {
-    if (tokenClient) return tokenClient;
-    const g = /** @type {any} */ (window).google;
-    if (!g || !g.accounts || !g.accounts.oauth2) {
-      throw new Error('Google Identity Services não carregou (verifique sua conexão ou bloqueador de anúncios)');
+    function settle(newToken, err) {
+      const resolve = pendingResolve;
+      const reject = pendingReject;
+      pendingResolve = null;
+      pendingReject = null;
+      if (err) { if (reject) reject(err); return; }
+      if (resolve) resolve(/** @type {string} */ (newToken));
     }
-    tokenClient = g.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
-      scope: DRIVE_SCOPE,
-      callback: (response) => {
-        if (response && response.error) {
-          settlePendingToken(null, new Error(response.error));
+
+    function ensureClient() {
+      if (client) return client;
+      const g = /** @type {any} */ (window).google;
+      if (!g || !g.accounts || !g.accounts.oauth2) {
+        throw new Error('Google Identity Services não carregou (verifique sua conexão ou bloqueador de anúncios)');
+      }
+      client = g.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope,
+        callback: (response) => {
+          if (response && response.error) {
+            settle(null, new Error(response.error));
+            return;
+          }
+          token = response.access_token;
+          expiresAt = Date.now() + Number(response.expires_in) * 1000;
+          settle(token, null);
+        },
+        error_callback: (err) => {
+          settle(null, new Error((err && err.type) || 'Falha ao abrir o login do Google'));
+        },
+      });
+      return client;
+    }
+
+    // Precisa ser chamada de forma síncrona a partir de um clique do usuário —
+    // é a única forma de o navegador não bloquear o popup de login do Google.
+    function requestNew() {
+      return new Promise((resolve, reject) => {
+        let c;
+        try {
+          c = ensureClient();
+        } catch (err) {
+          reject(err);
           return;
         }
-        accessToken = response.access_token;
-        accessTokenExpiresAt = Date.now() + Number(response.expires_in) * 1000;
-        settlePendingToken(accessToken, null);
-      },
-      error_callback: (err) => {
-        settlePendingToken(null, new Error((err && err.type) || 'Falha ao abrir o login do Google'));
-      },
-    });
-    return tokenClient;
+        pendingResolve = resolve;
+        pendingReject = reject;
+        c.requestAccessToken();
+      });
+    }
+
+    async function getToken() {
+      const stillValid = token && Date.now() < expiresAt - 60_000;
+      if (stillValid) return /** @type {string} */ (token);
+      return requestNew();
+    }
+
+    return { getToken };
   }
 
-  // Precisa ser chamada de forma síncrona a partir de um clique do usuário —
-  // é a única forma de o navegador não bloquear o popup de login do Google.
-  function requestNewAccessToken() {
-    return new Promise((resolve, reject) => {
-      let client;
-      try {
-        client = ensureTokenClient();
-      } catch (err) {
-        reject(err);
-        return;
-      }
-      pendingTokenResolve = resolve;
-      pendingTokenReject = reject;
-      client.requestAccessToken();
-    });
-  }
-
-  async function getAccessToken() {
-    const stillValid = accessToken && Date.now() < accessTokenExpiresAt - 60_000;
-    if (stillValid) return /** @type {string} */ (accessToken);
-    return requestNewAccessToken();
-  }
+  const driveAuth = createTokenManager(DRIVE_SCOPE);
+  const youtubeAuth = createTokenManager(YOUTUBE_SCOPE);
 
   /** @type {MediaStream | null} */
   let screenStream = null;
@@ -595,6 +612,7 @@
   const fileNameInput = /** @type {HTMLInputElement} */ (document.getElementById('fileNameInput'));
   const btnDownload = /** @type {HTMLButtonElement} */ (document.getElementById('btnDownload'));
   const btnShare = /** @type {HTMLButtonElement} */ (document.getElementById('btnShare'));
+  const btnShareYoutube = /** @type {HTMLButtonElement} */ (document.getElementById('btnShareYoutube'));
   const btnCopy = /** @type {HTMLButtonElement} */ (document.getElementById('btnCopy'));
   const linkArea = /** @type {HTMLElement} */ (document.getElementById('linkArea'));
   const linkOutput = /** @type {HTMLInputElement} */ (document.getElementById('linkOutput'));
@@ -839,6 +857,7 @@
     hintEl.hidden = true;
     linkOutput.value = '';
     btnShare.disabled = true;
+    btnShareYoutube.disabled = true;
     btnDownload.disabled = true;
     fileNameInput.value = '';
     fileNameInput.disabled = true;
@@ -1006,6 +1025,7 @@
     const duration = formatDuration(elapsedMs);
     setStatus(`Gravação finalizada (${duration}, ${sizeMb}). Revise e gere o link quando quiser.`, 'ready');
     btnShare.disabled = false;
+    btnShareYoutube.disabled = false;
     btnDownload.disabled = false;
     fileNameInput.disabled = false;
     fileNameInput.value = defaultFileNameBase();
@@ -1043,8 +1063,9 @@
     preview.controls = true;
     preview.src = previewObjectUrl;
 
-    setStatus(`Vídeo carregado (${formatMb(file.size)}). Envie para o Drive quando quiser.`, 'ready');
+    setStatus(`Vídeo carregado (${formatMb(file.size)}). Envie para o Drive ou YouTube quando quiser.`, 'ready');
     btnShare.disabled = false;
+    btnShareYoutube.disabled = false;
     fileNameInput.disabled = false;
     fileNameInput.value = baseNameFromFile(file.name);
   });
@@ -1052,26 +1073,33 @@
   // --- 4. Gerar Link de Compartilhamento ---
   btnShare.addEventListener('click', () => {
     if (!recordedBlob) return;
-    uploadRecording(recordedBlob);
+    uploadToDrive(recordedBlob);
+  });
+
+  // --- 5. Enviar para o YouTube (privado, pronto pra editar) ---
+  btnShareYoutube.addEventListener('click', () => {
+    if (!recordedBlob) return;
+    uploadToYoutube(recordedBlob);
   });
 
   /**
-   * Envia o arquivo para o Drive via upload multipart (metadados JSON + bytes
-   * do vídeo numa única requisição). Não dá pra usar FormData aqui porque o
-   * Drive espera `multipart/related` (com um boundary escolhido por nós), e
-   * não `multipart/form-data` como o FormData do navegador gera. Usamos XHR
-   * (não fetch) só por causa do `xhr.upload.onprogress` — a Fetch API não
-   * expõe progresso de upload, só de download da resposta.
+   * Upload multipart genérico (metadados JSON + bytes do arquivo numa única
+   * requisição) — Drive e YouTube usam a mesma convenção. Não dá pra usar
+   * FormData aqui porque as duas APIs esperam `multipart/related` (com um
+   * boundary escolhido por nós), não `multipart/form-data` como o FormData do
+   * navegador gera. Usamos XHR (não fetch) só por causa do
+   * `xhr.upload.onprogress` — a Fetch API não expõe progresso de upload, só
+   * de download da resposta.
+   * @param {string} url
+   * @param {object} metadata
    * @param {Blob} blob
-   * @param {string} fileName
    * @param {string} token
    * @param {(loaded: number, total: number) => void} onProgress
-   * @returns {Promise<string>} o id do arquivo criado no Drive
+   * @returns {Promise<any>}
    */
-  function driveUploadOnce(blob, fileName, token, onProgress) {
+  function multipartUpload(url, metadata, blob, token, onProgress) {
     return new Promise((resolve, reject) => {
       const boundary = 'maxxrecorder_' + Math.random().toString(36).slice(2);
-      const metadata = { name: fileName };
       const body = new Blob([
         `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`,
         `--${boundary}\r\nContent-Type: ${blob.type || 'video/webm'}\r\n\r\n`,
@@ -1089,8 +1117,8 @@
         let payload = null;
         try { payload = JSON.parse(xhr.responseText); } catch (err) { /* resposta não era JSON */ }
 
-        if (xhr.status >= 200 && xhr.status < 300 && payload && payload.id) {
-          resolve(payload.id);
+        if (xhr.status >= 200 && xhr.status < 300 && payload) {
+          resolve(payload);
         } else {
           const detail = (payload && payload.error && payload.error.message) || `HTTP ${xhr.status}`;
           reject(new UploadServerError(detail));
@@ -1099,11 +1127,47 @@
 
       xhr.addEventListener('error', () => reject(new UploadNetworkError('falha de rede')));
 
-      xhr.open('POST', DRIVE_UPLOAD_ENDPOINT);
+      xhr.open('POST', url);
       xhr.setRequestHeader('Authorization', 'Bearer ' + token);
       xhr.setRequestHeader('Content-Type', 'multipart/related; boundary=' + boundary);
       xhr.send(body);
     });
+  }
+
+  /**
+   * @param {Blob} blob
+   * @param {string} fileName
+   * @param {string} token
+   * @param {(loaded: number, total: number) => void} onProgress
+   * @returns {Promise<string>} o id do arquivo criado no Drive
+   */
+  function driveUploadOnce(blob, fileName, token, onProgress) {
+    return multipartUpload(DRIVE_UPLOAD_ENDPOINT, { name: fileName }, blob, token, onProgress)
+      .then((payload) => {
+        if (!payload.id) throw new UploadServerError('resposta do Drive sem id do arquivo');
+        return payload.id;
+      });
+  }
+
+  /**
+   * Sobe o vídeo pro YouTube sempre como "Privado" (só o dono do canal vê) —
+   * essa ferramenta é pra deixar pronto pra editar, não pra publicar.
+   * @param {Blob} blob
+   * @param {string} title
+   * @param {string} token
+   * @param {(loaded: number, total: number) => void} onProgress
+   * @returns {Promise<string>} o id do vídeo criado no YouTube
+   */
+  function youtubeUploadOnce(blob, title, token, onProgress) {
+    const metadata = {
+      snippet: { title },
+      status: { privacyStatus: 'private' },
+    };
+    return multipartUpload(YOUTUBE_UPLOAD_ENDPOINT, metadata, blob, token, onProgress)
+      .then((payload) => {
+        if (!payload.id) throw new UploadServerError('resposta do YouTube sem id do vídeo');
+        return payload.id;
+      });
   }
 
   /**
@@ -1128,13 +1192,17 @@
     });
   }
 
-  async function uploadRecording(blob) {
+  const DRIVE_SUCCESS_HINT = 'O vídeo foi enviado para o seu Google Drive com acesso liberado para "qualquer pessoa com o link". Fica disponível até você excluir o arquivo — sem prazo de expiração.';
+  const YOUTUBE_SUCCESS_HINT = 'Vídeo enviado como "Privado" (só você vê) — já está na sua biblioteca do YouTube Studio, pronto pra editar.';
+
+  async function uploadToDrive(blob) {
     if (blob.size > MAX_UPLOAD_BYTES) {
       setStatus(`Arquivo grande demais (${formatMb(blob.size)}). Use "Baixar Localmente".`, 'error');
       return;
     }
 
     btnShare.disabled = true;
+    btnShareYoutube.disabled = true;
     btnStart.disabled = true; // evita nova gravação por cima do upload em andamento
     isUploading = true;
 
@@ -1144,11 +1212,12 @@
     let token;
     try {
       setStatus('Conectando à sua conta Google...', 'busy');
-      token = await getAccessToken();
+      token = await driveAuth.getToken();
     } catch (err) {
       isUploading = false;
       btnStart.disabled = false;
       btnShare.disabled = false;
+      btnShareYoutube.disabled = false;
       setStatus(`Não foi possível conectar ao Google (${err.message}).`, 'error');
       return;
     }
@@ -1174,8 +1243,10 @@
         progressWrap.hidden = true;
         isUploading = false;
         btnStart.disabled = false;
+        btnShareYoutube.disabled = false;
         linkOutput.value = `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
         linkArea.hidden = false;
+        hintEl.textContent = DRIVE_SUCCESS_HINT;
         hintEl.hidden = false;
         setStatus('Link gerado com sucesso!', 'success');
         return;
@@ -1189,7 +1260,76 @@
         isUploading = false;
         btnStart.disabled = false;
         btnShare.disabled = false;
+        btnShareYoutube.disabled = false;
         setStatus(`Falha no upload: ${err.message}`, 'error');
+        return;
+      }
+    }
+  }
+
+  async function uploadToYoutube(blob) {
+    if (blob.size > MAX_UPLOAD_BYTES) {
+      setStatus(`Arquivo grande demais (${formatMb(blob.size)}). Use "Baixar Localmente".`, 'error');
+      return;
+    }
+
+    btnShare.disabled = true;
+    btnShareYoutube.disabled = true;
+    btnStart.disabled = true;
+    isUploading = true;
+
+    // Mesmo cuidado do Drive: token pedido antes de qualquer outro await, pra
+    // continuar dentro do mesmo gesto de clique do usuário.
+    let token;
+    try {
+      setStatus('Conectando à sua conta Google (YouTube)...', 'busy');
+      token = await youtubeAuth.getToken();
+    } catch (err) {
+      isUploading = false;
+      btnStart.disabled = false;
+      btnShare.disabled = false;
+      btnShareYoutube.disabled = false;
+      setStatus(`Não foi possível conectar ao YouTube (${err.message}).`, 'error');
+      return;
+    }
+
+    progressWrap.hidden = false;
+    const title = sanitizeBaseName(fileNameInput.value) || defaultFileNameBase();
+    const maxAttempts = 3;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        progressBar.style.width = '0%';
+        setStatus(attempt === 1 ? 'Enviando para o YouTube (0%)...' : `Tentando novamente (${attempt}/${maxAttempts})...`, 'busy');
+
+        const videoId = await youtubeUploadOnce(blob, title, token, (loaded, total) => {
+          const percent = Math.round((loaded / total) * 100);
+          progressBar.style.width = percent + '%';
+          setStatus(`Enviando para o YouTube (${percent}%)...`, 'busy');
+        });
+
+        progressWrap.hidden = true;
+        isUploading = false;
+        btnStart.disabled = false;
+        btnShare.disabled = false;
+        linkOutput.value = `https://studio.youtube.com/video/${videoId}/edit`;
+        linkArea.hidden = false;
+        hintEl.textContent = YOUTUBE_SUCCESS_HINT;
+        hintEl.hidden = false;
+        setStatus('Vídeo enviado ao YouTube com sucesso!', 'success');
+        return;
+      } catch (err) {
+        const canRetry = err instanceof UploadNetworkError && attempt < maxAttempts;
+        if (canRetry) {
+          await sleep(attempt * 1500);
+          continue;
+        }
+        progressWrap.hidden = true;
+        isUploading = false;
+        btnStart.disabled = false;
+        btnShare.disabled = false;
+        btnShareYoutube.disabled = false;
+        setStatus(`Falha no envio ao YouTube: ${err.message}`, 'error');
         return;
       }
     }
