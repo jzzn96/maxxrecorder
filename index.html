@@ -427,6 +427,11 @@
         <input type="text" id="fileNameInput" placeholder="gravacao" disabled>
       </div>
 
+      <div class="filename-row">
+        <label for="driveFolderInput" class="filename-label">Pasta no Drive</label>
+        <input type="text" id="driveFolderInput" placeholder="opcional — deixe em branco pra raiz do Drive">
+      </div>
+
       <div class="buttons">
         <button id="btnDownload" disabled>⭳ Baixar Localmente</button>
         <button id="btnShare" disabled>4. Enviar para o Google Drive</button>
@@ -617,6 +622,7 @@
   const btnPause = /** @type {HTMLButtonElement} */ (document.getElementById('btnPause'));
   const btnStop = /** @type {HTMLButtonElement} */ (document.getElementById('btnStop'));
   const fileNameInput = /** @type {HTMLInputElement} */ (document.getElementById('fileNameInput'));
+  const driveFolderInput = /** @type {HTMLInputElement} */ (document.getElementById('driveFolderInput'));
   const btnDownload = /** @type {HTMLButtonElement} */ (document.getElementById('btnDownload'));
   const btnShare = /** @type {HTMLButtonElement} */ (document.getElementById('btnShare'));
   const btnShareYoutube = /** @type {HTMLButtonElement} */ (document.getElementById('btnShareYoutube'));
@@ -656,6 +662,18 @@
     const next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
     storeTheme(next);
     applyTheme(next);
+  });
+
+  // Lembra o nome da pasta do Drive entre sessões, pra não precisar redigitar
+  // toda vez que for sempre a mesma pasta.
+  const DRIVE_FOLDER_STORAGE_KEY = 'maxxrecorder-drive-folder';
+
+  try {
+    driveFolderInput.value = localStorage.getItem(DRIVE_FOLDER_STORAGE_KEY) || '';
+  } catch (err) { /* ignorado */ }
+
+  driveFolderInput.addEventListener('change', () => {
+    try { localStorage.setItem(DRIVE_FOLDER_STORAGE_KEY, driveFolderInput.value); } catch (err) { /* ignorado */ }
   });
 
   function sleep(ms) {
@@ -1144,16 +1162,60 @@
   /**
    * @param {Blob} blob
    * @param {string} fileName
+   * @param {string | null} folderId
    * @param {string} token
    * @param {(loaded: number, total: number) => void} onProgress
    * @returns {Promise<string>} o id do arquivo criado no Drive
    */
-  function driveUploadOnce(blob, fileName, token, onProgress) {
-    return multipartUpload(DRIVE_UPLOAD_ENDPOINT, { name: fileName }, blob, token, onProgress)
+  function driveUploadOnce(blob, fileName, folderId, token, onProgress) {
+    const metadata = folderId ? { name: fileName, parents: [folderId] } : { name: fileName };
+    return multipartUpload(DRIVE_UPLOAD_ENDPOINT, metadata, blob, token, onProgress)
       .then((payload) => {
         if (!payload.id) throw new UploadServerError('resposta do Drive sem id do arquivo');
         return payload.id;
       });
+  }
+
+  /**
+   * Acha uma pasta com esse nome exato entre as que o próprio app já criou —
+   * sob o escopo `drive.file` é só isso que dá pra enxergar, nunca uma pasta
+   * que o usuário tenha criado por fora, manualmente, antes de usar o app.
+   * Cria uma pasta nova se não encontrar nenhuma com esse nome.
+   * @param {string} folderName
+   * @param {string} token
+   * @returns {Promise<string>} o id da pasta
+   */
+  async function ensureDriveFolder(folderName, token) {
+    const escaped = folderName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const query = `name = '${escaped}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const listUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)&spaces=drive`;
+
+    let listResp;
+    try {
+      listResp = await fetch(listUrl, { headers: { Authorization: 'Bearer ' + token } });
+    } catch (err) {
+      throw new UploadNetworkError('falha de rede ao procurar a pasta no Drive');
+    }
+    if (!listResp.ok) throw new UploadServerError(`falha ao procurar a pasta no Drive (HTTP ${listResp.status})`);
+    const listPayload = await listResp.json();
+    if (listPayload.files && listPayload.files.length > 0) {
+      return listPayload.files[0].id;
+    }
+
+    let createResp;
+    try {
+      createResp = await fetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: folderName, mimeType: 'application/vnd.google-apps.folder' }),
+      });
+    } catch (err) {
+      throw new UploadNetworkError('falha de rede ao criar a pasta no Drive');
+    }
+    if (!createResp.ok) throw new UploadServerError(`falha ao criar a pasta no Drive (HTTP ${createResp.status})`);
+    const createPayload = await createResp.json();
+    if (!createPayload.id) throw new UploadServerError('resposta do Drive sem id da pasta criada');
+    return createPayload.id;
   }
 
   /**
@@ -1231,14 +1293,22 @@
 
     progressWrap.hidden = false;
     const fileName = buildFileName(blob);
+    const folderName = driveFolderInput.value.trim();
     const maxAttempts = 3;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         progressBar.style.width = '0%';
+
+        let folderId = null;
+        if (folderName) {
+          setStatus('Verificando a pasta no Drive...', 'busy');
+          folderId = await ensureDriveFolder(folderName, token);
+        }
+
         setStatus(attempt === 1 ? 'Fazendo upload (0%)...' : `Tentando novamente (${attempt}/${maxAttempts})...`, 'busy');
 
-        const fileId = await driveUploadOnce(blob, fileName, token, (loaded, total) => {
+        const fileId = await driveUploadOnce(blob, fileName, folderId, token, (loaded, total) => {
           const percent = Math.round((loaded / total) * 100);
           progressBar.style.width = percent + '%';
           setStatus(`Fazendo upload (${percent}%)...`, 'busy');
