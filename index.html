@@ -468,13 +468,14 @@
   // ser "não sensível" não passa pela revisão/verificação de app do Google).
   // O escopo do YouTube (`youtube.upload`) já é "sensível", então o Google
   // mostra o aviso de "app não verificado" no login — normal em fase de teste.
-  // Client IDs separados para Drive e YouTube: usar o mesmo Client ID pros dois
-  // faz a Google tentar unificar o consentimento (autorização incremental) num
-  // pedido só, e ela recusa essa combinação especificamente ("scopes that
-  // cannot be requested together") — com Client IDs distintos cada um pede seu
-  // próprio consentimento, isolado do outro.
+  // Projetos do Google Cloud SEPARADOS para Drive e YouTube (não só Client IDs
+  // diferentes — a Google agrega os escopos já concedidos no nível do PROJETO
+  // inteiro, mesmo vindo de Client IDs distintos dentro dele). Misturar
+  // `drive.file` e `youtube.upload` no mesmo projeto faz a Google recusar com
+  // "scopes that cannot be requested together" — só resolve com projetos
+  // (e consequentemente Client IDs) totalmente separados.
   const DRIVE_CLIENT_ID = '1008553137920-2tt36vcp0bp83g5l5r3r0oh0gdsgscuo.apps.googleusercontent.com';
-  const YOUTUBE_CLIENT_ID = '1008553137920-l30r6nu7s76co58c6dfnh9vl411ni7qe.apps.googleusercontent.com';
+  const YOUTUBE_CLIENT_ID = '1083786151987-7nasfu4f8mroluplv9kjihdnghkpg1qt.apps.googleusercontent.com';
   const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
   const DRIVE_UPLOAD_ENDPOINT = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id';
   const YOUTUBE_SCOPE = 'https://www.googleapis.com/auth/youtube.upload';
