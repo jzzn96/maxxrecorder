@@ -286,6 +286,26 @@
     color: var(--danger);
   }
 
+  .file-picker-link {
+    display: inline-block;
+    width: auto;
+    flex: none;
+    background: none;
+    border: none;
+    padding: 4px 0;
+    margin: 0 0 4px;
+    color: var(--text-muted);
+    text-decoration: underline;
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+
+  .file-picker-link:hover:not(:disabled) {
+    background: none;
+    color: var(--primary);
+    transform: none;
+  }
+
   .link-area {
     margin-top: 4px;
     display: flex;
@@ -362,6 +382,16 @@
         <button id="btnPause" disabled>Pausar</button>
         <button id="btnStop" class="danger" disabled>3. Parar Gravação</button>
       </div>
+
+      <button type="button" id="btnPickFile" class="file-picker-link">📁 Ou envie um vídeo já gravado (ex.: pelo celular)</button>
+      <input type="file" id="fileInput" accept="video/*" hidden>
+
+      <p class="hint">
+        Celular não grava tela pelo navegador (nenhum aparelho suporta isso hoje, é uma
+        limitação da própria plataforma). Grave com o recurso nativo do celular — no iPhone,
+        Central de Controle → "Gravação de Tela"; no Android, atalhos rápidos → "Gravar tela" —
+        e envie o arquivo pelo botão acima.
+      </p>
 
       <div class="buttons">
         <button id="btnDownload" disabled>⭳ Baixar Localmente</button>
@@ -522,6 +552,8 @@
   const sizeDisplay = /** @type {HTMLElement} */ (document.getElementById('sizeDisplay'));
   const webcamToggle = /** @type {HTMLInputElement} */ (document.getElementById('webcamToggle'));
   const qualitySelect = /** @type {HTMLSelectElement} */ (document.getElementById('qualitySelect'));
+  const btnPickFile = /** @type {HTMLButtonElement} */ (document.getElementById('btnPickFile'));
+  const fileInput = /** @type {HTMLInputElement} */ (document.getElementById('fileInput'));
   const btnSelect = /** @type {HTMLButtonElement} */ (document.getElementById('btnSelect'));
   const btnStart = /** @type {HTMLButtonElement} */ (document.getElementById('btnStart'));
   const btnPause = /** @type {HTMLButtonElement} */ (document.getElementById('btnPause'));
@@ -915,6 +947,31 @@
     a.remove();
   });
 
+  // --- Ou envie um vídeo já gravado (ex.: gravação de tela nativa do celular) ---
+  // Reaproveita o mesmo pipeline de preview/upload da gravação ao vivo — um
+  // File é um Blob, então funciona sem nenhuma mudança no resto do código.
+  btnPickFile.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files && fileInput.files[0];
+    fileInput.value = ''; // permite escolher o mesmo arquivo de novo depois, se precisar
+    if (!file) return;
+
+    resetShareState();
+    recordedBlob = file;
+
+    if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+    previewObjectUrl = URL.createObjectURL(file);
+
+    preview.srcObject = null;
+    preview.muted = false;
+    preview.controls = true;
+    preview.src = previewObjectUrl;
+
+    setStatus(`Vídeo carregado (${formatMb(file.size)}). Envie para o Drive quando quiser.`, 'ready');
+    btnShare.disabled = false;
+  });
+
   // --- 4. Gerar Link de Compartilhamento ---
   btnShare.addEventListener('click', () => {
     if (!recordedBlob) return;
@@ -1091,7 +1148,10 @@
   // funcionam mesmo sem servidor — só precisam existir na API do navegador)
   const supported = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia && window.MediaRecorder);
   if (!supported) {
-    setStatus('Seu navegador não suporta as APIs necessárias. Use um Chrome, Edge ou Firefox atualizado.', 'error');
+    // Nenhum navegador de celular suporta gravação de tela (limitação da própria
+    // plataforma, não tem como contornar com código) — por isso a mensagem aponta
+    // pra gravação nativa + upload de arquivo, em vez de sugerir trocar de navegador.
+    setStatus('Este navegador não grava tela. Grave com o recurso nativo do seu aparelho e envie o arquivo pelo botão "📁 Ou envie um vídeo já gravado".', 'info');
     btnSelect.disabled = true;
   } else {
     setStatus('Aguardando permissão... Clique em "Selecionar Tela + Mic" para começar.');
