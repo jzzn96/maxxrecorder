@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MaxxRecorder</title>
+<style>
+  :root {
+    --bg: #000000;
+    --surface: #141414;
+    --surface-2: #1e1e1e;
+    --border: #2c2c2c;
+    --text: #ffffff;
+    --text-muted: #a3a3a3;
+    --primary: #fc4b08;
+    --primary-hover: #ff6a2f;
+    --danger: #ff5b6a;
+    --danger-text: #ffb3ba;
+    --success: #33d17a;
+    --warning: #ffb648;
+    --button-hover-bg: #262626;
+    --page-bg: radial-gradient(circle at 50% -10%, #2a1608 0%, #000000 55%);
+    --radius: 14px;
+  }
+
+  :root[data-theme="light"] {
+    --bg: #ffffff;
+    --surface: #fffaf6;
+    --surface-2: #f4f0ec;
+    --border: #e6e0da;
+    --text: #161616;
+    --text-muted: #6a6a6a;
+    --primary-hover: #e6430a;
+    --danger: #d8394a;
+    --danger-text: #b3001b;
+    --success: #1f9d57;
+    --warning: #a8650a;
+    --button-hover-bg: #ece7e2;
+    --page-bg: radial-gradient(circle at 50% -10%, #fff1e6 0%, #ffffff 55%);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--page-bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 32px 16px;
+    transition: background 0.2s ease, color 0.2s ease;
+  }
+
+  .app {
+    width: 100%;
+    max-width: 640px;
+  }
+
+  header {
+    position: relative;
+    text-align: center;
+    margin-bottom: 24px;
+    padding: 0 46px;
+  }
+
+  header h1 {
+    font-size: 1.6rem;
+    margin: 0 0 6px;
+  }
+
+  header p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+
+  .theme-toggle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 38px;
+    height: 38px;
+    flex: none;
+    padding: 0;
+    border-radius: 999px;
+    font-size: 1.05rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: 0 20px 50px -20px rgba(0, 0, 0, 0.6);
+  }
+
+  .video-wrap {
+    position: relative;
+    background: #000;
+    border-radius: 10px;
+    overflow: hidden;
+    aspect-ratio: 16 / 9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 14px;
+    border: 1px solid var(--border);
+  }
+
+  video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+  }
+
+  .live-meta {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    display: flex;
+    gap: 8px;
+    font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+    font-size: 0.78rem;
+  }
+
+  .live-meta span {
+    background: rgba(13, 13, 18, 0.72);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 10px;
+    backdrop-filter: blur(4px);
+  }
+
+  #timerDisplay { color: var(--danger); }
+  #sizeDisplay { color: var(--text-muted); }
+
+  .options-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .toggle {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.85rem;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .toggle input {
+    accent-color: var(--primary);
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+  }
+
+  .quality-picker {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  .quality-picker select {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 5px 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+
+  #status {
+    background: var(--surface-2);
+    border-left: 3px solid var(--text-muted);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 0.9rem;
+    margin-bottom: 14px;
+    transition: border-color 0.2s ease;
+  }
+
+  #status[data-type="ready"] { border-left-color: var(--success); }
+  #status[data-type="busy"] { border-left-color: var(--warning); }
+  #status[data-type="success"] { border-left-color: var(--success); }
+  #status[data-type="error"] { border-left-color: var(--danger); color: var(--danger-text); }
+  #status[data-type="recording"] {
+    border-left-color: var(--danger);
+  }
+  #status[data-type="recording"]::before {
+    content: "● ";
+    color: var(--danger);
+    animation: pulse 1.2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.25; }
+  }
+
+  .progress-track {
+    height: 6px;
+    background: var(--surface-2);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-bottom: 14px;
+  }
+
+  .progress-bar {
+    height: 100%;
+    width: 0%;
+    background: var(--primary);
+    transition: width 0.15s ease;
+  }
+
+  .buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  button {
+    flex: 1 1 140px;
+    padding: 11px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.1s ease, opacity 0.15s ease;
+  }
+
+  button:hover:not(:disabled) {
+    background: var(--button-hover-bg);
+    transform: translateY(-1px);
+  }
+
+  button:active:not(:disabled) {
+    transform: translateY(0);
+  }
+
+  button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  button.primary {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+  }
+
+  button.primary:hover:not(:disabled) {
+    background: var(--primary-hover);
+  }
+
+  button.danger {
+    background: transparent;
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+
+  .link-area {
+    margin-top: 4px;
+    display: flex;
+    gap: 8px;
+  }
+
+  .link-area input {
+    flex: 1;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-size: 0.85rem;
+    min-width: 0;
+  }
+
+  .hint {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    margin-top: 8px;
+    line-height: 1.4;
+  }
+
+  [hidden] { display: none !important; }
+
+  @media (max-width: 480px) {
+    button { flex: 1 1 100%; }
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <button type="button" id="themeToggle" class="theme-toggle" aria-label="Alternar tema">🌙</button>
+      <h1>🎥 MaxxRecorder</h1>
+      <p>Grave sua tela + microfone (com bolha de câmera opcional) e gere um link de compartilhamento, sem backend.</p>
+    </header>
+
+    <div class="card">
+      <div class="video-wrap">
+        <video id="preview" autoplay playsinline></video>
+        <div class="live-meta" id="liveMeta" hidden>
+          <span id="timerDisplay">00:00</span>
+          <span id="sizeDisplay">0.0 MB</span>
+        </div>
+      </div>
+
+      <div class="options-row">
+        <label class="toggle">
+          <input type="checkbox" id="webcamToggle">
+          <span>Incluir câmera (bolha)</span>
+        </label>
+
+        <label class="quality-picker">
+          <span>Qualidade</span>
+          <select id="qualitySelect">
+            <option value="high">Alta</option>
+            <option value="medium" selected>Média (recomendado)</option>
+            <option value="low">Economia</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="status" data-type="info">Aguardando permissão...</div>
+
+      <div class="progress-track" id="progressWrap" hidden>
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+
+      <div class="buttons">
+        <button id="btnSelect" class="primary">1. Selecionar Tela + Mic</button>
+        <button id="btnStart" disabled>2. Iniciar Gravação</button>
+        <button id="btnPause" disabled>Pausar</button>
+        <button id="btnStop" class="danger" disabled>3. Parar Gravação</button>
+      </div>
+
+      <div class="buttons">
+        <button id="btnDownload" disabled>⭳ Baixar Localmente</button>
+        <button id="btnShare" disabled>4. Gerar Link de Compartilhamento</button>
+      </div>
+
+      <div class="link-area" id="linkArea" hidden>
+        <input type="text" id="linkOutput" readonly>
+        <button id="btnCopy">Copiar Link</button>
+      </div>
+
+      <p class="hint" id="hint" hidden>
+        O link abre uma página de download no tmpfiles.org (o serviço gratuito usado aqui
+        não permite reprodução embutida direta) e fica disponível por até 48 horas.
+      </p>
+
+      <p class="hint">
+        O serviço de link gratuito aceita no máximo 100 MB por arquivo. "Economia" grava mais
+        tempo dentro desse limite; a gravação para automaticamente perto do limite para não
+        desperdiçar tempo com um upload que seria rejeitado.
+      </p>
+    </div>
+  </div>
+
+<script>
+// @ts-check
+(() => {
+  'use strict';
+
+  /**
+   * @typedef {{ videoBitsPerSecond: number, audioBitsPerSecond: number }} QualityPreset
+   */
+
+  // Serviço escolhido: tmpfiles.org — testado e confirmado que aceita upload via
+  // fetch/XHR com CORS liberado para qualquer origem (inclusive abrindo este
+  // arquivo direto como file://, sem servidor). Alternativas como file.io foram
+  // testadas e rejeitam a requisição por CORS a partir do navegador. A API
+  // documenta um limite de 100 MB por arquivo — daí o corte de segurança abaixo.
+  const UPLOAD_ENDPOINT = 'https://tmpfiles.org/api/v1/upload';
+  const LINK_EXPIRE_SECONDS = 172800; // 48h — o máximo permitido pela API (padrão seria 1h)
+  const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+  const SAFE_STOP_BYTES = 95 * 1024 * 1024; // margem de segurança antes do limite de 100 MB
+  const RECORDER_TIMESLICE_MS = 1000; // fatia a gravação em pedaços de 1s (permite tamanho "ao vivo")
+
+  /** @type {Record<string, QualityPreset>} */
+  const QUALITY_PRESETS = {
+    high: { videoBitsPerSecond: 5_000_000, audioBitsPerSecond: 128_000 },
+    medium: { videoBitsPerSecond: 2_500_000, audioBitsPerSecond: 128_000 },
+    low: { videoBitsPerSecond: 1_000_000, audioBitsPerSecond: 96_000 },
+  };
+
+  class UploadNetworkError extends Error {}
+  class UploadServerError extends Error {}
+
+  /** @type {MediaStream | null} */
+  let screenStream = null;
+  /** @type {MediaStream | null} */
+  let userStream = null; // getUserMedia: só mic, ou mic+câmera quando a bolha está ativa
+  /** @type {MediaStream | null} */
+  let combinedStream = null;
+  /** @type {MediaRecorder | null} */
+  let mediaRecorder = null;
+  /** @type {BlobPart[]} */
+  let recordedChunks = [];
+  /** @type {Blob | null} */
+  let recordedBlob = null;
+  /** @type {string | null} */
+  let previewObjectUrl = null;
+  /** @type {ReturnType<typeof createCompositor> | null} */
+  let compositor = null;
+  let isUploading = false;
+  let accumulatedBytes = 0;
+
+  // Cronômetro: elapsedMs guarda o tempo já confirmado; segmentStartedAt marca o
+  // início do trecho em andamento. Pausar soma o trecho a elapsedMs e zera
+  // segmentStartedAt — assim o tempo pausado nunca entra na duração exibida.
+  let elapsedMs = 0;
+  /** @type {number | null} */
+  let segmentStartedAt = null;
+  /** @type {ReturnType<typeof setInterval> | null} */
+  let timerInterval = null;
+
+  const themeToggle = /** @type {HTMLButtonElement} */ (document.getElementById('themeToggle'));
+  const preview = /** @type {HTMLVideoElement} */ (document.getElementById('preview'));
+  const statusEl = /** @type {HTMLElement} */ (document.getElementById('status'));
+  const hintEl = /** @type {HTMLElement} */ (document.getElementById('hint'));
+  const liveMeta = /** @type {HTMLElement} */ (document.getElementById('liveMeta'));
+  const timerDisplay = /** @type {HTMLElement} */ (document.getElementById('timerDisplay'));
+  const sizeDisplay = /** @type {HTMLElement} */ (document.getElementById('sizeDisplay'));
+  const webcamToggle = /** @type {HTMLInputElement} */ (document.getElementById('webcamToggle'));
+  const qualitySelect = /** @type {HTMLSelectElement} */ (document.getElementById('qualitySelect'));
+  const btnSelect = /** @type {HTMLButtonElement} */ (document.getElementById('btnSelect'));
+  const btnStart = /** @type {HTMLButtonElement} */ (document.getElementById('btnStart'));
+  const btnPause = /** @type {HTMLButtonElement} */ (document.getElementById('btnPause'));
+  const btnStop = /** @type {HTMLButtonElement} */ (document.getElementById('btnStop'));
+  const btnDownload = /** @type {HTMLButtonElement} */ (document.getElementById('btnDownload'));
+  const btnShare = /** @type {HTMLButtonElement} */ (document.getElementById('btnShare'));
+  const btnCopy = /** @type {HTMLButtonElement} */ (document.getElementById('btnCopy'));
+  const linkArea = /** @type {HTMLElement} */ (document.getElementById('linkArea'));
+  const linkOutput = /** @type {HTMLInputElement} */ (document.getElementById('linkOutput'));
+  const progressWrap = /** @type {HTMLElement} */ (document.getElementById('progressWrap'));
+  const progressBar = /** @type {HTMLElement} */ (document.getElementById('progressBar'));
+
+  function setStatus(message, type) {
+    statusEl.textContent = message;
+    statusEl.dataset.type = type || 'info';
+  }
+
+  // Tema claro/escuro: preto+laranja no escuro, branco+laranja no claro. Lido/
+  // salvo em localStorage — envolvido em try/catch porque localStorage pode
+  // lançar em contextos restritos (ex.: alguma configuração de navegação anônima).
+  const THEME_STORAGE_KEY = 'maxxrecorder-theme';
+
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    themeToggle.textContent = theme === 'light' ? '🌙' : '☀️';
+    themeToggle.setAttribute('aria-label', theme === 'light' ? 'Mudar para modo escuro' : 'Mudar para modo claro');
+  }
+
+  function loadStoredTheme() {
+    try { return localStorage.getItem(THEME_STORAGE_KEY); } catch (err) { return null; }
+  }
+
+  function storeTheme(theme) {
+    try { localStorage.setItem(THEME_STORAGE_KEY, theme); } catch (err) { /* ignorado */ }
+  }
+
+  applyTheme(loadStoredTheme() === 'light' ? 'light' : 'dark');
+
+  themeToggle.addEventListener('click', () => {
+    const next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+    storeTheme(next);
+    applyTheme(next);
+  });
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function formatMb(bytes) {
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function formatDuration(ms) {
+    const totalSec = Math.floor(ms / 1000);
+    const m = String(Math.floor(totalSec / 60)).padStart(2, '0');
+    const s = String(totalSec % 60).padStart(2, '0');
+    return `${m}:${s}`;
+  }
+
+  // O navegador só grava nos formatos que ele mesmo sabe decodificar depois.
+  // vp9/opus é o ideal (melhor compressão), mas nem todo navegador suporta —
+  // por isso a cadeia de fallback até o 'video/webm' genérico.
+  function pickMimeType() {
+    const candidates = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm',
+    ];
+    for (const type of candidates) {
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported(type)) return type;
+    }
+    return '';
+  }
+
+  /**
+   * Compõe a tela + uma "bolha" circular da webcam num canvas, quadro a quadro,
+   * e devolve isso como uma MediaStream (via canvas.captureStream) que pode ser
+   * gravada normalmente pelo MediaRecorder — é assim que o efeito estilo Loom
+   * funciona sem nenhuma lib externa.
+   * @param {MediaStream} screenSrc
+   * @param {MediaStream} camSrc
+   */
+  function createCompositor(screenSrc, camSrc) {
+    const screenTrackSettings = screenSrc.getVideoTracks()[0].getSettings();
+    const width = screenTrackSettings.width || 1280;
+    const height = screenTrackSettings.height || 720;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d'));
+
+    const screenVideoEl = document.createElement('video');
+    screenVideoEl.srcObject = screenSrc;
+    screenVideoEl.muted = true;
+    screenVideoEl.playsInline = true;
+    screenVideoEl.play().catch(() => {});
+
+    const camVideoEl = document.createElement('video');
+    camVideoEl.srcObject = camSrc;
+    camVideoEl.muted = true;
+    camVideoEl.playsInline = true;
+    camVideoEl.play().catch(() => {});
+
+    const bubbleRadius = Math.max(60, Math.round(height * 0.12));
+    const margin = Math.round(height * 0.03);
+
+    /** @type {number | null} */
+    let rafId = null;
+
+    function drawFrame() {
+      ctx.drawImage(screenVideoEl, 0, 0, canvas.width, canvas.height);
+
+      const cx = canvas.width - margin - bubbleRadius;
+      const cy = canvas.height - margin - bubbleRadius;
+
+      if (camVideoEl.videoWidth > 0) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, bubbleRadius, 0, Math.PI * 2);
+        ctx.closePath();
+        ctx.clip();
+
+        // "cover" dentro do círculo, preservando a proporção da webcam
+        const vw = camVideoEl.videoWidth;
+        const vh = camVideoEl.videoHeight;
+        const scale = Math.max((bubbleRadius * 2) / vw, (bubbleRadius * 2) / vh);
+        const dw = vw * scale;
+        const dh = vh * scale;
+        ctx.drawImage(camVideoEl, cx - dw / 2, cy - dh / 2, dw, dh);
+        ctx.restore();
+
+        ctx.beginPath();
+        ctx.arc(cx, cy, bubbleRadius, 0, Math.PI * 2);
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = 'rgba(252, 75, 8, 0.9)';
+        ctx.stroke();
+      }
+
+      rafId = requestAnimationFrame(drawFrame);
+    }
+    drawFrame();
+
+    const composedStream = canvas.captureStream(30);
+
+    function stop() {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      composedStream.getTracks().forEach((track) => track.stop());
+      screenVideoEl.pause();
+      camVideoEl.pause();
+      screenVideoEl.srcObject = null;
+      camVideoEl.srcObject = null;
+    }
+
+    return { stream: composedStream, stop };
+  }
+
+  function startTimer() {
+    elapsedMs = 0;
+    accumulatedBytes = 0;
+    segmentStartedAt = Date.now();
+    liveMeta.hidden = false;
+    updateTimerDisplay();
+    updateSizeDisplay();
+    timerInterval = setInterval(updateTimerDisplay, 250);
+  }
+
+  function pauseTimerSegment() {
+    if (segmentStartedAt !== null) {
+      elapsedMs += Date.now() - segmentStartedAt;
+      segmentStartedAt = null;
+    }
+  }
+
+  function resumeTimerSegment() {
+    segmentStartedAt = Date.now();
+  }
+
+  function stopTimer() {
+    pauseTimerSegment();
+    if (timerInterval !== null) clearInterval(timerInterval);
+    timerInterval = null;
+    liveMeta.hidden = true;
+  }
+
+  function updateTimerDisplay() {
+    const current = elapsedMs + (segmentStartedAt !== null ? Date.now() - segmentStartedAt : 0);
+    timerDisplay.textContent = formatDuration(current);
+  }
+
+  function updateSizeDisplay() {
+    sizeDisplay.textContent = formatMb(accumulatedBytes);
+  }
+
+  function stopMediaTracks() {
+    [screenStream, userStream].forEach((stream) => {
+      if (stream) stream.getTracks().forEach((track) => track.stop());
+    });
+    if (compositor) {
+      compositor.stop();
+      compositor = null;
+    }
+    screenStream = null;
+    userStream = null;
+    combinedStream = null;
+  }
+
+  function resetShareState() {
+    recordedChunks = [];
+    recordedBlob = null;
+    linkArea.hidden = true;
+    hintEl.hidden = true;
+    linkOutput.value = '';
+    btnShare.disabled = true;
+    btnDownload.disabled = true;
+  }
+
+  function resetControlsAfterSession() {
+    webcamToggle.disabled = false;
+    qualitySelect.disabled = false;
+    btnStart.disabled = true;
+    btnPause.disabled = true;
+    btnPause.textContent = 'Pausar';
+    btnStop.disabled = true;
+    btnSelect.disabled = false;
+  }
+
+  function handleScreenShareEnded() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      btnStop.click();
+    } else {
+      stopMediaTracks();
+      setStatus('Compartilhamento de tela encerrado.', 'info');
+      resetControlsAfterSession();
+    }
+  }
+
+  // --- 1. Selecionar Tela + Microfone (+ Câmera opcional) ---
+  btnSelect.addEventListener('click', async () => {
+    resetShareState();
+    btnSelect.disabled = true;
+    webcamToggle.disabled = true;
+    qualitySelect.disabled = true;
+    preview.controls = false;
+
+    const wantsWebcam = webcamToggle.checked;
+
+    try {
+      setStatus('Aguardando permissão de compartilhamento de tela...', 'busy');
+      screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: false, // o app usa só o microfone; áudio do sistema não entra
+      });
+
+      if (wantsWebcam) {
+        setStatus('Aguardando permissão da câmera e do microfone...', 'busy');
+        userStream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 320 }, height: { ideal: 320 } },
+          audio: true,
+        });
+      } else {
+        setStatus('Aguardando permissão do microfone...', 'busy');
+        userStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+
+      // Se o usuário parar o compartilhamento pelo controle nativo do próprio
+      // navegador (em vez do botão "Parar Gravação" daqui), tratamos como um
+      // clique em "Parar" para não deixar o app num estado inconsistente.
+      screenStream.getVideoTracks()[0].addEventListener('ended', handleScreenShareEnded);
+
+      let videoTrackForRecording;
+      if (wantsWebcam) {
+        compositor = createCompositor(screenStream, userStream);
+        videoTrackForRecording = compositor.stream.getVideoTracks()[0];
+      } else {
+        videoTrackForRecording = screenStream.getVideoTracks()[0];
+      }
+
+      combinedStream = new MediaStream([videoTrackForRecording, ...userStream.getAudioTracks()]);
+
+      preview.srcObject = combinedStream;
+      preview.muted = true; // evita o eco do próprio microfone durante a pré-visualização
+      await preview.play().catch(() => {});
+
+      setStatus('Tudo pronto. Clique em "Iniciar Gravação" quando quiser começar.', 'ready');
+      btnStart.disabled = false;
+    } catch (err) {
+      console.error(err);
+      setStatus(`Não foi possível obter permissão (${err.message}).`, 'error');
+      stopMediaTracks();
+      webcamToggle.disabled = false;
+      qualitySelect.disabled = false;
+      btnSelect.disabled = false;
+    }
+  });
+
+  // --- 2. Iniciar Gravação ---
+  btnStart.addEventListener('click', () => {
+    if (!combinedStream) return;
+    resetShareState();
+
+    const preset = QUALITY_PRESETS[qualitySelect.value] || QUALITY_PRESETS.medium;
+    const mimeType = pickMimeType();
+    /** @type {MediaRecorderOptions} */
+    const options = { ...preset };
+    if (mimeType) options.mimeType = mimeType;
+
+    try {
+      mediaRecorder = new MediaRecorder(combinedStream, options);
+    } catch (err) {
+      setStatus(`Seu navegador não conseguiu iniciar a gravação (${err.message}).`, 'error');
+      return;
+    }
+
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        recordedChunks.push(event.data);
+        accumulatedBytes += event.data.size;
+        updateSizeDisplay();
+
+        if (accumulatedBytes >= SAFE_STOP_BYTES) {
+          setStatus('Limite de tamanho do serviço de upload quase atingido — gravação parada automaticamente.', 'error');
+          btnStop.click();
+        }
+      }
+    };
+    mediaRecorder.onstop = handleRecordingStopped;
+
+    mediaRecorder.start(RECORDER_TIMESLICE_MS);
+    startTimer();
+    setStatus('Gravando...', 'recording');
+    btnStart.disabled = true;
+    btnPause.disabled = false;
+    btnStop.disabled = false;
+    btnSelect.disabled = true;
+  });
+
+  // --- Pausar / Retomar ---
+  btnPause.addEventListener('click', () => {
+    if (!mediaRecorder) return;
+    if (mediaRecorder.state === 'recording') {
+      mediaRecorder.pause();
+      pauseTimerSegment();
+      setStatus('Gravação pausada.', 'busy');
+      btnPause.textContent = 'Retomar';
+    } else if (mediaRecorder.state === 'paused') {
+      mediaRecorder.resume();
+      resumeTimerSegment();
+      setStatus('Gravando...', 'recording');
+      btnPause.textContent = 'Pausar';
+    }
+  });
+
+  // --- 3. Parar Gravação ---
+  btnStop.addEventListener('click', () => {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop(); // dispara onstop -> handleRecordingStopped
+    }
+    stopTimer();
+    stopMediaTracks();
+    resetControlsAfterSession();
+  });
+
+  function handleRecordingStopped() {
+    const outputType = (mediaRecorder && mediaRecorder.mimeType) || 'video/webm';
+    recordedBlob = new Blob(recordedChunks, { type: outputType });
+
+    if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+    previewObjectUrl = URL.createObjectURL(recordedBlob);
+
+    preview.srcObject = null;
+    preview.muted = false;
+    preview.controls = true;
+    preview.src = previewObjectUrl;
+
+    const sizeMb = formatMb(recordedBlob.size);
+    const duration = formatDuration(elapsedMs);
+    setStatus(`Gravação finalizada (${duration}, ${sizeMb}). Revise e gere o link quando quiser.`, 'ready');
+    btnShare.disabled = false;
+    btnDownload.disabled = false;
+  }
+
+  // --- Baixar Localmente ---
+  btnDownload.addEventListener('click', () => {
+    if (!recordedBlob || !previewObjectUrl) return;
+    const a = document.createElement('a');
+    a.href = previewObjectUrl;
+    a.download = `gravacao-${Date.now()}.webm`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
+
+  // --- 4. Gerar Link de Compartilhamento ---
+  btnShare.addEventListener('click', () => {
+    if (!recordedBlob) return;
+    uploadRecording(recordedBlob);
+  });
+
+  /**
+   * Uma tentativa de upload via XMLHttpRequest (não fetch — só XHR expõe
+   * progresso de UPLOAD através de `xhr.upload.onprogress`; a Fetch API só dá
+   * progresso de download da resposta).
+   * @param {Blob} blob
+   * @param {string} fileName
+   * @param {(loaded: number, total: number) => void} onProgress
+   * @returns {Promise<string>}
+   */
+  function xhrUploadOnce(blob, fileName, onProgress) {
+    return new Promise((resolve, reject) => {
+      const formData = new FormData();
+      formData.append('file', blob, fileName);
+      formData.append('expire', String(LINK_EXPIRE_SECONDS));
+
+      const xhr = new XMLHttpRequest();
+
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable) onProgress(event.loaded, event.total);
+      });
+
+      xhr.addEventListener('load', () => {
+        let payload = null;
+        try { payload = JSON.parse(xhr.responseText); } catch (err) { /* resposta não era JSON */ }
+
+        if (xhr.status >= 200 && xhr.status < 300 && payload && payload.status === 'success') {
+          resolve(payload.data.url);
+        } else {
+          const detail = (payload && payload.message) || `HTTP ${xhr.status}`;
+          reject(new UploadServerError(detail));
+        }
+      });
+
+      xhr.addEventListener('error', () => reject(new UploadNetworkError('falha de rede')));
+
+      xhr.open('POST', UPLOAD_ENDPOINT);
+      xhr.send(formData);
+    });
+  }
+
+  async function uploadRecording(blob) {
+    if (blob.size > MAX_UPLOAD_BYTES) {
+      setStatus(`Arquivo grande demais para o serviço gratuito (${formatMb(blob.size)}, limite de 100 MB). Use "Baixar Localmente".`, 'error');
+      return;
+    }
+
+    btnShare.disabled = true;
+    btnStart.disabled = true; // evita nova gravação por cima do upload em andamento
+    isUploading = true;
+    progressWrap.hidden = false;
+
+    const fileName = `gravacao-${Date.now()}.webm`;
+    const maxAttempts = 3;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        progressBar.style.width = '0%';
+        setStatus(attempt === 1 ? 'Fazendo upload (0%)...' : `Tentando novamente (${attempt}/${maxAttempts})...`, 'busy');
+
+        const shareUrl = await xhrUploadOnce(blob, fileName, (loaded, total) => {
+          const percent = Math.round((loaded / total) * 100);
+          progressBar.style.width = percent + '%';
+          setStatus(`Fazendo upload (${percent}%)...`, 'busy');
+        });
+
+        progressWrap.hidden = true;
+        isUploading = false;
+        btnStart.disabled = false;
+        linkOutput.value = shareUrl;
+        linkArea.hidden = false;
+        hintEl.hidden = false;
+        setStatus('Link gerado com sucesso!', 'success');
+        return;
+      } catch (err) {
+        const canRetry = err instanceof UploadNetworkError && attempt < maxAttempts;
+        if (canRetry) {
+          await sleep(attempt * 1500);
+          continue;
+        }
+        progressWrap.hidden = true;
+        isUploading = false;
+        btnStart.disabled = false;
+        btnShare.disabled = false;
+        setStatus(`Falha no upload: ${err.message}`, 'error');
+        return;
+      }
+    }
+  }
+
+  // --- Copiar Link ---
+  btnCopy.addEventListener('click', async () => {
+    if (!linkOutput.value) return;
+    try {
+      await navigator.clipboard.writeText(linkOutput.value);
+    } catch (err) {
+      // Fallback para navegadores sem permissão/suporte à Clipboard API assíncrona
+      linkOutput.select();
+      document.execCommand('copy');
+    }
+    const original = btnCopy.textContent;
+    btnCopy.textContent = 'Copiado!';
+    setTimeout(() => { btnCopy.textContent = original; }, 1500);
+  });
+
+  // Evita perder uma gravação (ou um upload) em andamento com um fechamento
+  // acidental da aba.
+  window.addEventListener('beforeunload', (event) => {
+    const recorderBusy = !!mediaRecorder && (mediaRecorder.state === 'recording' || mediaRecorder.state === 'paused');
+    if (recorderBusy || isUploading) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+  });
+
+  // Checagem de suporte do navegador (o app roda sobre file://, que os
+  // navegadores tratam como contexto seguro, então getUserMedia/getDisplayMedia
+  // funcionam mesmo sem servidor — só precisam existir na API do navegador)
+  const supported = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia && window.MediaRecorder);
+  if (!supported) {
+    setStatus('Seu navegador não suporta as APIs necessárias. Use um Chrome, Edge ou Firefox atualizado.', 'error');
+    btnSelect.disabled = true;
+  } else {
+    setStatus('Aguardando permissão... Clique em "Selecionar Tela + Mic" para começar.');
+  }
+})();
+</script>
+</body>
+</html>
